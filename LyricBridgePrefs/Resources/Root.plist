@@ -109,6 +109,41 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
+			<string>Apple Lyrics</string>
+			<key>footerText</key>
+			<string>Automatic can replace plain lyrics on imported songs. Apple First trusts Apple's synced-lyrics flag. Online First tries lyric services first.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSegmentCell</string>
+			<key>key</key>
+			<string>AppleTimingPolicy</string>
+			<key>label</key>
+			<string>Apple Lyrics</string>
+			<key>default</key>
+			<integer>1</integer>
+			<key>defaults</key>
+			<string>com.shalamand3r.lyricbridge</string>
+			<key>PostNotification</key>
+			<string>com.shalamand3r.lyricbridge/ReloadPrefs</string>
+			<key>validTitles</key>
+			<array>
+				<string>Apple First</string>
+				<string>Automatic</string>
+				<string>Online First</string>
+			</array>
+			<key>validValues</key>
+			<array>
+				<integer>0</integer>
+				<integer>1</integer>
+				<integer>2</integer>
+			</array>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
 			<string>Experimental</string>
 			<key>footerText</key>
 			<string>Cache management and reset options.</string>
