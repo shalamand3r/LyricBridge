@@ -123,6 +123,7 @@ typedef NS_ENUM(int, NLAppleLyricsPolicy) {
     NLAppleLyricsOnlineFirst = 2
 };
 static atomic_int appleLyricsPolicy = NLAppleLyricsAutomatic;
+// imported-lyrics handling adapted from u/m9z2w4d8vw-blip's fix.
 static NSUInteger NLLocalPlainLyricsLength(id song) {
     id text = NLObject(NLObject(song, @"lyrics"), @"text");
     if (![text isKindOfClass:NSString.class]) return 0;
