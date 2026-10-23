@@ -634,7 +634,6 @@ static void LyricBridgeWipeLyricsCaches(void) {
     [haptic impactOccurred];
 
     CFPreferencesSetAppValue(CFSTR("Enabled"), (__bridge CFPropertyListRef)@YES, CFSTR("com.shalamand3r.lyricbridge"));
-    CFPreferencesSetAppValue(CFSTR("AppleTimingPolicy"), (__bridge CFPropertyListRef)@1, CFSTR("com.shalamand3r.lyricbridge"));
     CFPreferencesSetAppValue(CFSTR("EnableSing"), (__bridge CFPropertyListRef)@YES, CFSTR("com.shalamand3r.lyricbridge"));
     CFPreferencesSetAppValue(CFSTR("DebugLogging"), kCFBooleanFalse, CFSTR("com.shalamand3r.lyricbridge"));
     CFPreferencesSetAppValue(CFSTR("PerformanceLogging"), kCFBooleanFalse, CFSTR("com.shalamand3r.lyricbridge"));
