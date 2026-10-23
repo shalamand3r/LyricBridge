@@ -11,6 +11,7 @@ static atomic_bool singLogging;
 static atomic_bool singHooksReady;
 static atomic_int singControlState = -1;
 static atomic_int singSupportState = -1;
+static atomic_int singVisibilityState = -1;
 static atomic_uint_fast64_t singReasonState = UINT64_MAX;
 static void singControlLog(int state, NSString *event) {
     if (atomic_load(&singLogging) && atomic_exchange(&singControlState, state) != state)
@@ -23,6 +24,7 @@ void NLSingSetLoggingEnabled(BOOL enabled) {
     atomic_store(&singLogging, enabled);
     atomic_store(&singControlState, -1);
     atomic_store(&singSupportState, -1);
+    atomic_store(&singVisibilityState, -1);
     atomic_store(&singReasonState, UINT64_MAX);
     singLog(atomic_load(&singHooksReady) ? @"Sing hooks ready" : @"Sing hooks unavailable");
 }
@@ -30,6 +32,9 @@ static atomic_bool hasControl;
 static BOOL (*originalSupport)(id, SEL);
 static id (*originalControl)(id, SEL);
 static void (*originalHidden)(id, SEL, BOOL);
+static void (*originalControlsLayout)(id, SEL);
+static NSMapTable<UIView *, UIViewController *> *singSliderOwners;
+static char singNativeHiddenKey;
 static uint64_t (*originalUnavailableReasons)(id, SEL);
 static BOOL (*originalDownloadedAsset)(id, SEL);
 static BOOL (*originalShouldAttach)(id, SEL, id);
@@ -129,12 +134,56 @@ static id vocalsControl(id list, SEL selector) {
         return cachedCommand;
     }
 }
+static UIViewController *singSliderOwner(UIView *slider) {
+    UIViewController *owner = [singSliderOwners objectForKey:slider];
+    if (owner) return owner;
+    UIResponder *responder = slider;
+    for (NSUInteger depth = 0; responder && depth < 32; ++depth, responder = responder.nextResponder) {
+        if (![responder isKindOfClass:UIViewController.class] || ![NSStringFromClass(responder.class) hasSuffix:@"NowPlayingControlsViewController"]) continue;
+        owner = (UIViewController *)responder;
+        [singSliderOwners setObject:owner forKey:slider];
+        return owner;
+    }
+    return nil;
+}
+static BOOL singLyricsPanelVisible(UIView *slider, UIViewController *owner) {
+    if (!owner || !owner.isViewLoaded || !slider.window || !owner.view.window || owner.view.hidden) return NO;
+    id button = objectProperty(owner, @"accessibilityLyricsButton");
+    return [button isKindOfClass:UIButton.class] && [(UIButton *)button isSelected];
+}
+static BOOL singResolvedHidden(UIView *slider, UIViewController *owner, BOOL nativeHidden) {
+    if (!atomic_load(&singEnabled) || !atomic_load(&hasControl) || !originalControlsLayout) return nativeHidden;
+    BOOL visible = singLyricsPanelVisible(slider, owner);
+    if (atomic_load(&singLogging) && atomic_exchange(&singVisibilityState, visible) != visible)
+        singLog([NSString stringWithFormat:@"Sing control visibility: lyricsOpen=%d", visible]);
+    return !visible;
+}
+static void singRefreshSlider(UIViewController *owner) {
+    UIView *slider = objectProperty(owner, @"accessibilityVocalAttenuationToggleSlider");
+    if (![slider isKindOfClass:UIView.class] || !originalHidden) return;
+    [singSliderOwners setObject:owner forKey:slider];
+    NSNumber *requested = objc_getAssociatedObject(slider, &singNativeHiddenKey);
+    if (!requested) {
+        requested = @(slider.hidden);
+        objc_setAssociatedObject(slider, &singNativeHiddenKey, requested, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    originalHidden(slider, @selector(setHidden:), singResolvedHidden(slider, owner, requested.boolValue));
+}
+static void singControlsDidLayout(id owner, SEL selector) {
+    originalControlsLayout(owner, selector);
+    singRefreshSlider(owner);
+}
 static void sliderHidden(id slider, SEL selector, BOOL hidden) {
-    if (atomic_load(&singEnabled) && atomic_load(&hasControl)) hidden = NO;
-    originalHidden(slider, selector, hidden);
+    if (!NSThread.isMainThread) { originalHidden(slider, selector, hidden); return; }
+    // remember apple's requested state so disabling the override restores it.
+    objc_setAssociatedObject(slider, &singNativeHiddenKey, @(hidden), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    originalHidden(slider, selector, singResolvedHidden(slider, singSliderOwner(slider), hidden));
 }
 void NLSingSetEnabled(BOOL enabled) {
     atomic_store(&singEnabled, enabled);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        for (UIViewController *owner in singSliderOwners.objectEnumerator.allObjects) singRefreshSlider(owner);
+    });
     singLog(enabled ? @"Sing enabled" : @"Sing disabled");
     if (!enabled) {
         atomic_store(&hasControl, false);
@@ -143,9 +192,12 @@ void NLSingSetEnabled(BOOL enabled) {
 }
 void NLSingStart(void) {
     commandLock = [NSObject new];
+    singSliderOwners = [NSMapTable weakToWeakObjectsMapTable];
     Class item = NSClassFromString(@"MPCModelGenericAVItem");
     Class list = NSClassFromString(@"MPCPlayerResponseTracklist");
     Class slider = NSClassFromString(@"MusicVocalsAttenuationSlider");
+    Class controls = NSClassFromString(@"MusicNowPlayingControlsViewController");
+    Method layout = class_getInstanceMethod(controls, @selector(viewDidLayoutSubviews));
     Method support = class_getInstanceMethod(item, NSSelectorFromString(@"supportsVocalAttenuation"));
     Method control = class_getInstanceMethod(list, NSSelectorFromString(@"vocalsControlCommand"));
     Method hidden = class_getInstanceMethod(slider, @selector(setHidden:));
@@ -156,6 +208,8 @@ void NLSingStart(void) {
     MSHookMessageEx(item, NSSelectorFromString(@"supportsVocalAttenuation"), (IMP)supportsVocals, (IMP *)&originalSupport);
     MSHookMessageEx(list, NSSelectorFromString(@"vocalsControlCommand"), (IMP)vocalsControl, (IMP *)&originalControl);
     MSHookMessageEx(slider, @selector(setHidden:), (IMP)sliderHidden, (IMP *)&originalHidden);
+    if (layout && strcmp(method_getTypeEncoding(layout), "v16@0:8") == 0)
+        MSHookMessageEx(controls, @selector(viewDidLayoutSubviews), (IMP)singControlsDidLayout, (IMP *)&originalControlsLayout);
     atomic_store(&singHooksReady, originalSupport && originalControl && originalHidden);
     NSOperatingSystemVersion version = NSProcessInfo.processInfo.operatingSystemVersion;
     if (version.majorVersion != 17 || version.minorVersion != 0) return;
