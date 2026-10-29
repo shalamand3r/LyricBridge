@@ -75,6 +75,8 @@ static BOOL singShouldAttach(id controller, SEL selector, id item) {
 
 static NSObject *commandLock;
 static __weak id cachedList;
+static __weak id cachedResponse;
+static __weak id cachedSong;
 static id cachedCommand;
 
 @protocol NLSingCommand <NSObject>
@@ -108,15 +110,18 @@ static id vocalsControl(id list, SEL selector) {
     if (native || !song) {
         singControlLog(native ? 1 : 2, native ? @"Sing native control available" : @"Sing waiting for song metadata");
         atomic_store(&hasControl, native != nil);
-        @synchronized (commandLock) { cachedCommand = nil; cachedList = nil; }
+        @synchronized (commandLock) { cachedCommand = nil; cachedList = nil; cachedResponse = nil; cachedSong = nil; }
         return native;
     }
     @synchronized (commandLock) {
-        if (cachedList != list) { cachedCommand = nil; cachedList = list; }
+        Ivar responseIvar = class_getInstanceVariable([list class], "_response");
+        const char *type = responseIvar ? ivar_getTypeEncoding(responseIvar) : NULL;
+        id response = type && type[0] == '@' ? object_getIvar(list, responseIvar) : nil;
+        // a tracklist can be reused after its underlying player response changes.
+        if (cachedList != list || cachedResponse != response || cachedSong != song) {
+            cachedCommand = nil; cachedList = list; cachedResponse = response; cachedSong = song;
+        }
         if (!cachedCommand) {
-            Ivar responseIvar = class_getInstanceVariable([list class], "_response");
-            const char *type = responseIvar ? ivar_getTypeEncoding(responseIvar) : NULL;
-            id response = type && type[0] == '@' ? object_getIvar(list, responseIvar) : nil;
             Class cls = NSClassFromString(@"_MPCVocalsControlCommand");
             if (response && [cls instancesRespondToSelector:@selector(initWithResponse:)]) {
                 id<NLSingCommand> command = [[cls alloc] initWithResponse:response];
@@ -187,7 +192,7 @@ void NLSingSetEnabled(BOOL enabled) {
     singLog(enabled ? @"Sing enabled" : @"Sing disabled");
     if (!enabled) {
         atomic_store(&hasControl, false);
-        @synchronized (commandLock) { cachedCommand = nil; cachedList = nil; }
+        @synchronized (commandLock) { cachedCommand = nil; cachedList = nil; cachedResponse = nil; cachedSong = nil; }
     }
 }
 void NLSingStart(void) {
